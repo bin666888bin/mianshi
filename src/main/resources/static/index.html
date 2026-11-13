@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>灯塔漂流瓶</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #e6f2f4;
+      --ink: #16323a;
+      --muted: #5d737a;
+      --card: #fffdf8;
+      --line: #d5e4e6;
+      --sea: #1f6f8b;
+      --lamp: #c56a2d;
+      --sand: #f4efe4;
+      --warn: #8d3418;
+      --warn-bg: #fff1ea;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(700px 240px at 50% -40px, rgba(197, 106, 45, 0.18), transparent 70%),
+        var(--bg);
+      color: var(--ink);
+      font: 16px/1.5 "Iowan Old Style", "Palatino Linotype", Palatino, "Songti SC", "PingFang SC", serif;
+    }
+
+    main { width: min(680px, calc(100% - 32px)); margin: 0 auto; padding: 36px 0 56px; }
+
+    h1 { margin: 0 0 8px; font-size: 36px; font-weight: 650; letter-spacing: -0.03em; }
+    header p { margin: 0; color: var(--muted); }
+
+    form, .bottle, .recent { margin-top: 18px; padding: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; }
+
+    label { display: block; margin-bottom: 12px; color: var(--muted); font-size: 14px; }
+    input, textarea {
+      display: block; width: 100%; margin-top: 6px; padding: 10px 12px;
+      border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink);
+      font: inherit;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+
+    button {
+      border: 0; border-radius: 999px; padding: 10px 16px; font: inherit; cursor: pointer;
+      background: var(--sea); color: white;
+    }
+    button.quiet { background: var(--sand); color: var(--ink); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    .notes { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: var(--warn-bg); color: var(--warn); }
+    .notes ul { margin: 6px 0 0; padding-left: 18px; }
+
+    .status {
+      display: inline-block; padding: 2px 10px; border-radius: 999px;
+      background: #e7f3f6; color: var(--sea); font-size: 14px;
+    }
+    .status.BOTTLED { background: #f4efe4; color: #7a5b32; }
+    .status.DRIFTING { background: #e3f2f8; color: var(--sea); }
+    .status.RETURNED { background: #e7f6ee; color: #1d7a46; }
+
+    .block { margin-top: 14px; }
+    .block span { display: block; color: var(--muted); font-size: 13px; }
+    .echo, .wish { margin: 4px 0 0; font-size: 18px; }
+
+    .voyages { list-style: none; margin: 8px 0 0; padding: 0; }
+    .voyages li { padding: 8px 0; border-top: 1px solid var(--line); }
+    .voyages li.extra { color: var(--warn); }
+
+    .id { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; word-break: break-all; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row input { margin-top: 0; }
+    .error { color: #9d342c; }
+    .recent h2, .bottle h2 { margin: 0 0 10px; font-size: 18px; }
+    .recent button { display: block; width: 100%; margin-top: 8px; text-align: left; background: var(--sand); color: var(--ink); }
+    .recent button small { display: block; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>灯塔漂流瓶</h1>
+      <p>写下心里话，放进瓶子。灯塔会让它出海大约两秒，再把回音送回来。</p>
+    </header>
+
+    <form id="cast-form">
+      <label>署名
+        <input id="from-name" value="小宇" required maxlength="40">
+      </label>
+      <label>心里话
+        <textarea id="wish" required maxlength="500">希望明天放晴</textarea>
+      </label>
+      <button id="cast" type="submit">投入海里</button>
+      <p id="form-error" class="error" hidden></p>
+    </form>
+
+    <section id="bottle"></section>
+
+    <section class="recent">
+      <h2>再看一只</h2>
+      <div class="row">
+        <input id="lookup-id" placeholder="瓶子编号">
+        <button class="quiet" id="lookup" type="button">查看</button>
+      </div>
+      <div id="recent"></div>
+    </section>
+  </main>
+  <script>
+    const labels = { BOTTLED: "已入瓶", DRIFTING: "漂流中", RETURNED: "已归来" };
+    const bottleEl = document.getElementById("bottle");
+    const recentEl = document.getElementById("recent");
+    const formError = document.getElementById("form-error");
+    const KEY = "lighthouse.recent";
+    let timer = null;
+    let watching = null;
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    function loadRecent() {
+      try { return JSON.parse(localStorage.getItem(KEY) || "[]"); }
+      catch { return []; }
+    }
+
+    function remember(id) {
+      const items = [id, ...loadRecent().filter((item) => item !== id)].slice(0, 6);
+      localStorage.setItem(KEY, JSON.stringify(items));
+      renderRecent();
+    }
+
+    function renderRecent() {
+      recentEl.innerHTML = "";
+      for (const id of loadRecent()) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.innerHTML = "<span>继续看这只</span><small></small>";
+        button.querySelector("small").textContent = id;
+        button.addEventListener("click", () => watch(id));
+        recentEl.appendChild(button);
+      }
+    }
+
+    function notesFor(bottle) {
+      const notes = [];
+      const voyages = bottle.voyages || [];
+      if (voyages.length > 1) notes.push("这只瓶子出海了不止一次");
+      if (bottle.echo && bottle.wish && !bottle.echo.includes(bottle.wish)) notes.push("回音里没有你写下的心里话");
+      if (bottle.echo && bottle.status === "BOTTLED") notes.push("已经有回音了，状态却还是已入瓶");
+      return notes;
+    }
+
+    function render(bottle) {
+      const notes = notesFor(bottle);
+      const voyages = bottle.voyages || [];
+      bottleEl.innerHTML = `
+        <article class="bottle">
+          ${notes.length ? `<div class="notes"><strong>和预期不符</strong><ul>${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul></div>` : ""}
+          <h2>${escapeHtml(bottle.fromName)} 的瓶子</h2>
+          <p class="id">${escapeHtml(bottle.id)}</p>
+          <div class="block"><span>状态</span><p><b class="status ${escapeHtml(bottle.status)}">${escapeHtml(labels[bottle.status] || bottle.status)}</b></p></div>
+          <div class="block"><span>心里话</span><p class="wish">${escapeHtml(bottle.wish)}</p></div>
+          <div class="block"><span>回音</span><p class="echo">${escapeHtml(bottle.echo || "海面还没有回音")}</p></div>
+          <div class="block">
+            <span>出海记录</span>
+            ${voyages.length ? `<ol class="voyages">${voyages.map((line, index) => `<li class="${index > 0 ? "extra" : ""}">${escapeHtml(line)}</li>`).join("")}</ol>` : "<p>还没有出海。</p>"}
+          </div>
+        </article>
+      `;
+    }
+
+    async function refresh() {
+      if (!watching) return;
+      const response = await fetch(`/api/bottles/${encodeURIComponent(watching)}`);
+      if (!response.ok) {
+        bottleEl.innerHTML = `<article class="bottle"><p class="error">没有找到这只瓶子。</p></article>`;
+        return;
+      }
+      render(await response.json());
+    }
+
+    function watch(id) {
+      watching = id;
+      if (timer) clearInterval(timer);
+      timer = setInterval(refresh, 1000);
+      remember(id);
+      refresh();
+    }
+
+    document.getElementById("cast-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      formError.hidden = true;
+      const button = document.getElementById("cast");
+      button.disabled = true;
+      const response = await fetch("/api/bottles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromName: document.getElementById("from-name").value.trim(),
+          wish: document.getElementById("wish").value.trim()
+        })
+      });
+      button.disabled = false;
+      if (!response.ok) {
+        formError.hidden = false;
+        formError.textContent = "请写上署名和心里话。";
+        return;
+      }
+      watch((await response.json()).id);
+    });
+
+    document.getElementById("lookup").addEventListener("click", () => {
+      const id = document.getElementById("lookup-id").value.trim();
+      if (id) watch(id);
+    });
+
+    renderRecent();
+  </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+name: drift-bottle
+
+services:
+  app:
+    image: drift-bottle:1.0.0
+    build: .
+    ports:
+      - "8080:8080"
